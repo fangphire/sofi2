@@ -1,8 +1,16 @@
 import time
+import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from nse import NSE
 from backend.database import get_connection
+
+# lxml is faster but optional — fall back to the stdlib html.parser if missing
+try:
+    import lxml  # noqa: F401
+    _lxml_available = True
+except ImportError:
+    _lxml_available = False
 
 TICKERS = [
     # Large cap — IT
@@ -329,7 +337,7 @@ def fetch_screener_data(symbol):
         print(f"  Screener: no usable page for {symbol}")
         return {}
 
-    soup = BeautifulSoup(response.text, "lxml")
+    soup = BeautifulSoup(response.text, "lxml" if _lxml_available else "html.parser")
 
     # ── parse #top-ratios ────────────────────────────────────────────────────
     # Each <li> looks like:
