@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FinPulse — Indian Market Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3247;
+      --text: #e8eaf0;
+      --muted: #8b90a7;
+      --accent: #4f8ef7;
+      --green: #26a69a;
+      --red: #ef5350;
+      --yellow: #ffb74d;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── header ── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--text); font-weight: 400; }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .last-updated {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .refresh-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 7px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .refresh-btn:hover { opacity: 0.85; }
+
+    /* ── layout ── */
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+
+    /* ── summary cards ── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .card-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+    .card-value {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .card-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── filters ── */
+    .filters {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filters select, .filters input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+    .filters select:focus, .filters input:focus {
+      border-color: var(--accent);
+    }
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .clear-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 7px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .clear-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── table ── */
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .table-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .table-title { font-weight: 500; }
+    .stock-count { font-size: 12px; color: var(--muted); }
+    .compare-btn {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .compare-btn:hover { background: var(--accent); color: white; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      background: var(--surface2);
+      padding: 10px 14px;
+      text-align: right;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    thead th:first-child { text-align: left; }
+    thead th:hover { color: var(--accent); }
+    thead th.sorted { color: var(--accent); }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody tr.selected { background: rgba(79, 142, 247, 0.08); }
+
+    td {
+      padding: 11px 14px;
+      text-align: right;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    td:first-child { text-align: left; }
+
+    .company-name {
+      font-weight: 500;
+      color: var(--text);
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ticker-badge {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: monospace;
+    }
+    .sector-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: var(--surface2);
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .neutral  { color: var(--muted); }
+
+    .checkbox-cell {
+      text-align: center !important;
+      width: 36px;
+    }
+    input[type="checkbox"] { cursor: pointer; accent-color: var(--accent); }
+
+    /* ── chart section ── */
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .chart-title {
+      font-weight: 500;
+      font-size: 14px;
+    }
+    .chart-subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .period-btns { display: flex; gap: 4px; }
+    .period-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 4px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .period-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    canvas { width: 100% !important; }
+
+    /* ── comparison panel ── */
+    .compare-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      overflow-y: auto;
+      max-height: 420px;
+    }
+    .compare-title {
+      font-weight: 500;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .compare-empty {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      padding: 40px 0;
+    }
+    .compare-metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .compare-metric:last-child { border-bottom: none; }
+    .compare-metric-label { color: var(--muted); }
+    .compare-values { display: flex; gap: 12px; }
+    .compare-val { text-align: right; min-width: 60px; }
+    .compare-ticker-header {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .compare-ticker-label { min-width: 60px; text-align: center; color: var(--accent); }
+
+    /* ── heatmap ── */
+    .heatmap-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .heatmap-cell {
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .heatmap-cell:hover { opacity: 0.8; }
+    .heatmap-name {
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .heatmap-val { font-size: 13px; font-weight: 600; }
+
+    /* ── loading / error ── */
+    .loading {
+      text-align: center;
+      padding: 60px;
+      color: var(--muted);
+    }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      background: rgba(239, 83, 80, 0.1);
+      border: 1px solid rgba(239, 83, 80, 0.3);
+      color: var(--red);
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    /* ── tooltip ── */
+    .th-tooltip {
+      position: relative;
+      display: inline-block;
+    }
+    .th-tooltip .tip {
+      display: none;
+      position: absolute;
+      bottom: 130%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a2d3e;
+      color: var(--text);
+      font-size: 11px;
+      padding: 5px 9px;
+      border-radius: 5px;
+      white-space: nowrap;
+      border: 1px solid var(--border);
+      z-index: 200;
+      font-weight: 400;
+      text-transform: none;
+    }
+    .th-tooltip:hover .tip { display: block; }
+
+    @media (max-width: 900px) {
+      .bottom-grid { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- header -->
+<div class="header">
+  <div class="logo">Fin<span>Pulse</span></div>
+  <div class="header-right">
+    <span class="last-updated" id="last-updated">Loading...</span>
+    <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- error banner -->
+  <div class="error-msg" id="error-msg" style="display:none;"></div>
+
+  <!-- summary cards -->
+  <div class="summary-grid" id="summary-grid">
+    <div class="card"><div class="card-label">Companies Tracked</div><div class="card-value" id="s-count">—</div></div>
+    <div class="card"><div class="card-label">Total Market Cap</div><div class="card-value" id="s-mcap">—</div><div class="card-sub">₹ Crores</div></div>
+    <div class="card"><div class="card-label">Avg P/E Ratio</div><div class="card-value" id="s-pe">—</div></div>
+    <div class="card"><div class="card-label">Avg ROE</div><div class="card-value" id="s-roe">—</div><div class="card-sub">%</div></div>
+    <div class="card"><div class="card-label">Avg ROCE</div><div class="card-value" id="s-roce">—</div><div class="card-sub">%</div></div>
+    <div class="card"><div class="card-label">Top Grower</div><div class="card-value" id="s-grower" style="font-size:15px;">—</div><div class="card-sub" id="s-grower-val"></div></div>
+  </div>
+
+  <!-- filters -->
+  <div class="filters">
+    <span class="filter-label">Filter:</span>
+    <select id="filter-sector" onchange="applyFilters()">
+      <option value="">All Sectors</option>
+    </select>
+    <select id="filter-sort" onchange="applyFilters()">
+      <option value="market_cap">Sort: Market Cap</option>
+      <option value="pe_ratio">Sort: P/E Ratio</option>
+      <option value="roe">Sort: ROE</option>
+      <option value="roce">Sort: ROCE</option>
+      <option value="sales_growth_3yr">Sort: Sales Growth 3Y</option>
+      <option value="profit_growth_3yr">Sort: Profit Growth 3Y</option>
+      <option value="debt_to_equity">Sort: Debt/Equity</option>
+    </select>
+    <select id="filter-order" onchange="applyFilters()">
+      <option value="desc">High → Low</option>
+      <option value="asc">Low → High</option>
+    </select>
+    <input type="number" id="filter-min-roe" placeholder="Min ROE %" style="width:120px" onchange="applyFilters()"/>
+    <select id="filter-heatmap" onchange="updateHeatmap()">
+      <option value="roe">Heatmap: ROE</option>
+      <option value="roce">Heatmap: ROCE</option>
+      <option value="sales_growth_3yr">Heatmap: Sales Growth 3Y</option>
+      <option value="profit_growth_3yr">Heatmap: Profit Growth 3Y</option>
+      <option value="pe_ratio">Heatmap: P/E Ratio</option>
+      <option value="opm">Heatmap: OPM</option>
+    </select>
+    <button class="clear-btn" onclick="clearFilters()">Clear</button>
+  </div>
+
+  <!-- stocks table -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <div>
+        <span class="table-title">Indian Equities</span>
+        <span class="stock-count" id="stock-count"></span>
+      </div>
+      <button class="compare-btn" onclick="compareSelected()">Compare Selected ↗</button>
+    </div>
+    <div id="table-container">
+      <div class="loading"><div class="spinner"></div>Fetching market data...</div>
+    </div>
+  </div>
+
+  <!-- heatmap -->
+  <div class="heatmap-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">Financial Ratio Heatmap</div>
+        <div class="chart-subtitle">Colour intensity reflects metric strength</div>
+      </div>
+    </div>
+    <div class="heatmap-grid" id="heatmap-grid"></div>
+  </div>
+
+  <!-- chart + compare panel -->
+  <div class="bottom-grid">
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title" id="chart-title">Price History</div>
+          <div class="chart-subtitle" id="chart-subtitle">Click any stock row to view chart</div>
+        </div>
+        <div class="period-btns">
+          <button class="period-btn active" onclick="setPeriod('1mo', this)">1M</button>
+          <button class="period-btn" onclick="setPeriod('3mo', this)">3M</button>
+          <button class="period-btn" onclick="setPeriod('6mo', this)">6M</button>
+          <button class="period-btn" onclick="setPeriod('1y', this)">1Y</button>
+        </div>
+      </div>
+      <canvas id="price-chart" height="200"></canvas>
+    </div>
+
+    <div class="compare-panel">
+      <div class="compare-title">
+        <span>Compare Stocks</span>
+        <button class="clear-btn" onclick="clearComparison()" style="font-size:11px;padding:4px 10px;">Clear</button>
+      </div>
+      <div id="compare-content">
+        <div class="compare-empty">Tick up to 3 stocks in the table to compare</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = "https://sofi-p2gq.onrender.com"
+
+  let allStocks = []
+  let priceChart = null
+  let selectedTicker = null
+  let currentPeriod = "1mo"
+  let selectedForCompare = []
+
+  // ── data loading ──────────────────────────────────────────────────────────
+
+  async function loadAll() {
+    try {
+      showError(null)
+      const [stocksRes, summaryRes, sectorsRes] = await Promise.all([
+        fetch(`${API}/stocks`),
+        fetch(`${API}/market-summary`),
+        fetch(`${API}/sectors`)
+      ])
+
+      if (!stocksRes.ok) throw new Error(`API error: ${stocksRes.status}`)
+
+      const stocksData  = await stocksRes.json()
+      const summaryData = await summaryRes.json()
+      const sectorsData = await sectorsRes.json()
+
+      allStocks = stocksData.stocks
+      renderSummary(summaryData)
+      renderSectorFilter(sectorsData.sectors)
+      renderTable(allStocks)
+      updateHeatmap()
+
+      document.getElementById("last-updated").textContent =
+        "Updated " + new Date().toLocaleTimeString("en-IN")
+
+    } catch (err) {
+      showError("Could not connect to API. Is Render deployed? — " + err.message)
+    }
+  }
+
+  // ── summary cards ─────────────────────────────────────────────────────────
+
+  function renderSummary(data) {
+    document.getElementById("s-count").textContent = data.total_companies ?? "—"
+    document.getElementById("s-mcap").textContent  = data.total_market_cap_cr
+      ? "₹" + formatCr(data.total_market_cap_cr) : "—"
+    document.getElementById("s-pe").textContent   = data.avg_pe_ratio?.toFixed(1) ?? "—"
+    document.getElementById("s-roe").textContent  = data.avg_roe?.toFixed(1) ?? "—"
+    document.getElementById("s-roce").textContent = data.avg_roce?.toFixed(1) ?? "—"
+
+    if (data.top_grower) {
+      document.getElementById("s-grower").textContent = data.top_grower.company_name?.split(" ")[0] ?? "—"
+      document.getElementById("s-grower-val").textContent =
+        (data.top_grower.sales_growth_3yr?.toFixed(1) ?? "—") + "% sales CAGR 3Y"
+    }
+  }
+
+  // ── sector filter ─────────────────────────────────────────────────────────
+
+  function renderSectorFilter(sectors) {
+    const sel = document.getElementById("filter-sector")
+    sectors.forEach(s => {
+      const opt = document.createElement("option")
+      opt.value = s.sector
+      opt.textContent = `${s.sector} (${s.stock_count})`
+      sel.appendChild(opt)
+    })
+  }
+
+  // ── table ─────────────────────────────────────────────────────────────────
+
+  function renderTable(stocks) {
+    document.getElementById("stock-count").textContent = ` — ${stocks.length} companies`
+
+    if (!stocks.length) {
+      document.getElementById("table-container").innerHTML =
+        `<div class="loading">No stocks match the current filters</div>`
+      return
+    }
+
+    const html = `
+      <table>
+        <thead>
+          <tr>
+            <th class="checkbox-cell"></th>
+            <th style="text-align:left">Company</th>
+            <th><div class="th-tooltip">Price<span class="tip">Current market price (₹)</span></div></th>
+            <th><div class="th-tooltip">Mkt Cap Cr<span class="tip">Market capitalisation in ₹ Crores</span></div></th>
+            <th><div class="th-tooltip">P/E<span class="tip">Price to Earnings ratio</span></div></th>
+            <th><div class="th-tooltip">EPS<span class="tip">Earnings per share (₹)</span></div></th>
+            <th><div class="th-tooltip">ROE %<span class="tip">Return on Equity</span></div></th>
+            <th><div class="th-tooltip">ROCE %<span class="tip">Return on Capital Employed</span></div></th>
+            <th><div class="th-tooltip">OPM %<span class="tip">Operating Profit Margin</span></div></th>
+            <th><div class="th-tooltip">D/E<span class="tip">Debt to Equity ratio</span></div></th>
+            <th><div class="th-tooltip">Sales 3Y%<span class="tip">3-year sales CAGR</span></div></th>
+            <th><div class="th-tooltip">PAT 3Y%<span class="tip">3-year profit CAGR</span></div></th>
+            <th><div class="th-tooltip">EV/EBITDA<span class="tip">Enterprise Value to EBITDA</span></div></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stocks.map(s => rowHtml(s)).join("")}
+        </tbody>
+      </table>`
+
+    document.getElementById("table-container").innerHTML = html
+  }
+
+  function rowHtml(s) {
+    const checked = selectedForCompare.includes(s.ticker) ? "checked" : ""
+    const isSelected = selectedTicker === s.ticker ? "selected" : ""
+
+    return `
+      <tr class="${isSelected}" onclick="onRowClick('${s.ticker}', '${s.company_name}')">
+        <td class="checkbox-cell" onclick="event.stopPropagation()">
+          <input type="checkbox" ${checked}
+            onchange="toggleCompare('${s.ticker}', this.checked)"/>
+        </td>
+        <td>
+          <div class="company-name">${s.company_name}</div>
+          <div class="ticker-badge">${s.ticker}</div>
+          <div class="sector-tag">${s.sector ?? "—"}</div>
+        </td>
+        <td>₹${fmt(s.current_price)}</td>
+        <td>${s.market_cap ? "₹" + formatCr(s.market_cap / 1e7) : "—"}</td>
+        <td>${fmt(s.pe_ratio)}</td>
+        <td>${fmt(s.eps)}</td>
+        <td class="${colorClass(s.roe, 12, 20)}">${fmt(s.roe)}</td>
+        <td class="${colorClass(s.roce, 12, 20)}">${fmt(s.roce)}</td>
+        <td class="${colorClass(s.opm, 10, 20)}">${fmt(s.opm)}</td>
+        <td class="${debtColor(s.debt_to_equity)}">${fmt(s.debt_to_equity)}</td>
+        <td class="${colorClass(s.sales_growth_3yr, 8, 15)}">${fmtPct(s.sales_growth_3yr)}</td>
+        <td class="${colorClass(s.profit_growth_3yr, 8, 15)}">${fmtPct(s.profit_growth_3yr)}</td>
+        <td>${fmt(s.ev_ebitda)}</td>
+      </tr>`
+  }
+
+  // ── filters ───────────────────────────────────────────────────────────────
+
+  async function applyFilters() {
+    const sector  = document.getElementById("filter-sector").value
+    const sortBy  = document.getElementById("filter-sort").value
+    const order   = document.getElementById("filter-order").value
+    const minRoe  = document.getElementById("filter-min-roe").value
+
+    let url = `${API}/stocks?sort_by=${sortBy}&order=${order}`
+    if (sector) url += `&sector=${encodeURIComponent(sector)}`
+    if (minRoe) url += `&min_roe=${minRoe}`
+
+    try {
+      const res  = await fetch(url)
+      const data = await res.json()
+      allStocks  = data.stocks
+      renderTable(allStocks)
+      updateHeatmap()
+    } catch (err) {
+      showError("Filter error: " + err.message)
+    }
+  }
+
+  function clearFilters() {
+    document.getElementById("filter-sector").value  = ""
+    document.getElementById("filter-sort").value    = "market_cap"
+    document.getElementById("filter-order").value   = "desc"
+    document.getElementById("filter-min-roe").value = ""
+    loadAll()
+  }
+
+  // ── price chart ───────────────────────────────────────────────────────────
+
+  async function onRowClick(ticker, name) {
+    selectedTicker = ticker
+    document.querySelectorAll("tbody tr").forEach(r => r.classList.remove("selected"))
+    event.currentTarget.classList.add("selected")
+    document.getElementById("chart-title").textContent = name
+    document.getElementById("chart-subtitle").textContent = ticker
+    await loadChart(ticker, currentPeriod)
+  }
+
+  async function loadChart(ticker, period) {
+    try {
+      const res  = await fetch(`${API}/stocks/${ticker}/history?period=${period}`)
+      const data = await res.json()
+
+      if (!res.ok || !Array.isArray(data.history) || data.history.length === 0) {
+        throw new Error(data.detail || "Price history is unavailable for this stock")
+      }
+
+      const labels = data.history.map(d => d.date)
+      const prices = data.history.map(d => d.close_price)
+      const first  = prices[0]
+      const last   = prices[prices.length - 1]
+      const up     = last >= first
+
+      if (priceChart) priceChart.destroy()
+
+      const ctx = document.getElementById("price-chart").getContext("2d")
+      priceChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            data: prices,
+            borderColor: up ? "#26a69a" : "#ef5350",
+            backgroundColor: up
+              ? "rgba(38,166,154,0.08)"
+              : "rgba(239,83,80,0.08)",
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => "₹" + ctx.parsed.y.toLocaleString("en-IN")
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: "#8b90a7",
+                maxTicksLimit: 8,
+                font: { size: 11 }
+              },
+              grid: { color: "#2e3247" }
+            },
+            y: {
+              ticks: {
+                color: "#8b90a7",
+                font: { size: 11 },
+                callback: v => "₹" + v.toLocaleString("en-IN")
+              },
+              grid: { color: "#2e3247" }
+            }
+          }
+        }
+      })
+    } catch (err) {
+      showError("Chart error: " + err.message)
+    }
+  }
+
+  function setPeriod(period, btn) {
+    currentPeriod = period
+    document.querySelectorAll(".period-btn").forEach(b => b.classList.remove("active"))
+    btn.classList.add("active")
+    if (selectedTicker) loadChart(selectedTicker, period)
+  }
+
+  // ── heatmap ───────────────────────────────────────────────────────────────
+
+  function updateHeatmap() {
+    const metric = document.getElementById("filter-heatmap").value
+    const grid   = document.getElementById("heatmap-grid")
+
+    const values  = allStocks.map(s => s[metric]).filter(v => v != null)
+    const min     = Math.min(...values)
+    const max     = Math.max(...values)
+
+    grid.innerHTML = allStocks.map(s => {
+      const val = s[metric]
+      const normalized = val != null ? (val - min) / (max - min || 1) : 0
+      const bg  = heatColor(normalized, metric)
+      const display = val != null ? val.toFixed(1) + (metric.includes("growth") || metric === "roe" || metric === "roce" || metric === "opm" ? "%" : "x") : "—"
+
+      return `
+        <div class="heatmap-cell" style="background:${bg}"
+             onclick="onHeatClick('${s.ticker}', '${s.company_name}')">
+          <div class="heatmap-name">${s.company_name.split(" ")[0]}</div>
+          <div class="heatmap-val">${display}</div>
+        </div>`
+    }).join("")
+  }
+
+  function heatColor(t, metric) {
+    // for debt — red is high, green is low (inverted)
+    const invert = metric === "debt_to_equity" || metric === "pe_ratio"
+    const v = invert ? 1 - t : t
+    const r = Math.round(239 + (38  - 239) * v)
+    const g = Math.round(83  + (166 - 83)  * v)
+    const b = Math.round(80  + (154 - 80)  * v)
+    return `rgba(${r},${g},${b},0.75)`
+  }
+
+  function onHeatClick(ticker, name) {
+    selectedTicker = ticker
+    loadChart(ticker, currentPeriod)
+    document.getElementById("chart-title").textContent = name
+    document.getElementById("chart-subtitle").textContent = ticker
+  }
+
+  // ── comparison panel ──────────────────────────────────────────────────────
+
+  function toggleCompare(ticker, checked) {
+    if (checked && selectedForCompare.length >= 3) {
+      event.target.checked = false
+      return
+    }
+    if (checked) {
+      selectedForCompare.push(ticker)
+    } else {
+      selectedForCompare = selectedForCompare.filter(t => t !== ticker)
+    }
+    renderComparePanel()
+  }
+
+  async function compareSelected() {
+    if (!selectedForCompare.length) return
+    renderComparePanel()
+  }
+
+  async function renderComparePanel() {
+    const panel = document.getElementById("compare-content")
+
+    if (!selectedForCompare.length) {
+      panel.innerHTML = `<div class="compare-empty">Tick up to 3 stocks in the table to compare</div>`
+      return
+    }
+
+    try {
+      const url  = `${API}/compare?tickers=${selectedForCompare.join(",")}`
+      const res  = await fetch(url)
+      const data = await res.json()
+
+      const metrics = [
+        ["Current Price", "current_price", "₹"],
+        ["Market Cap Cr", "market_cap", "cr"],
+        ["P/E Ratio", "pe_ratio", "x"],
+        ["ROE %", "roe", "%"],
+        ["ROCE %", "roce", "%"],
+        ["OPM %", "opm", "%"],
+        ["Sales Growth 3Y", "sales_growth_3yr", "%"],
+        ["Profit Growth 3Y", "profit_growth_3yr", "%"],
+        ["Debt / Equity", "debt_to_equity", "x"],
+        ["EV/EBITDA", "ev_ebitda", "x"],
+        ["EPS", "eps", "₹"],
+        ["Beta", "beta", ""],
+      ]
+
+      const tickers = selectedForCompare
+
+      let html = `
+        <div class="compare-ticker-header">
+          ${tickers.map(t => `<span class="compare-ticker-label">${t.replace(".NS","")}</span>`).join("")}
+        </div>`
+
+      metrics.forEach(([label, key, unit]) => {
+        html += `<div class="compare-metric">
+          <span class="compare-metric-label">${label}</span>
+          <div class="compare-values">`
+
+        tickers.forEach(t => {
+          const raw = data.comparison[t]?.[key]
+          let display = "—"
+          if (raw != null) {
+            if (unit === "cr") display = "₹" + formatCr(raw / 1e7)
+            else if (unit === "₹") display = "₹" + raw.toLocaleString("en-IN", {maximumFractionDigits: 1})
+            else display = raw.toFixed(1) + unit
+          }
+          html += `<span class="compare-val">${display}</span>`
+        })
+
+        html += `</div></div>`
+      })
+
+      panel.innerHTML = html
+    } catch (err) {
+      panel.innerHTML = `<div class="compare-empty">Error loading comparison</div>`
+    }
+  }
+
+  function clearComparison() {
+    selectedForCompare = []
+    document.querySelectorAll("input[type=checkbox]").forEach(c => c.checked = false)
+    renderComparePanel()
+  }
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+
+  function fmt(val) {
+    if (val == null) return '<span class="neutral">—</span>'
+    return val.toLocaleString("en-IN", { maximumFractionDigits: 2 })
+  }
+
+  function fmtPct(val) {
+    if (val == null) return '<span class="neutral">—</span>'
+    return val.toFixed(1) + "%"
+  }
+
+  function formatCr(val) {
+    if (val == null) return "—"
+    if (val >= 100000) return (val / 100000).toFixed(1) + "L"
+    if (val >= 1000)   return (val / 1000).toFixed(1) + "K"
+    return val.toFixed(0)
+  }
+
+  function colorClass(val, low, high) {
+    if (val == null) return "neutral"
+    if (val >= high) return "positive"
+    if (val >= low)  return ""
+    return "negative"
+  }
+
+  function debtColor(val) {
+    if (val == null) return "neutral"
+    if (val < 0.5)   return "positive"
+    if (val < 1.5)   return ""
+    return "negative"
+  }
+
+  function showError(msg) {
+    const el = document.getElementById("error-msg")
+    if (msg) { el.textContent = msg; el.style.display = "block" }
+    else       el.style.display = "none"
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────────
+
+  loadAll()
+
+  // auto refresh every 5 minutes
+  setInterval(loadAll, 5 * 60 * 1000)
+</script>
+</body>
+</html>
