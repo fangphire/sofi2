@@ -295,16 +295,21 @@ def fetch_price_history(symbol, days=365):
 def fetch_screener_data(symbol):
     """
     Scrapes key fundamentals from screener.in public company page.
-    NSE doesn't provide ROE, ROCE, OPM, D/E, EV/EBITDA — screener does.
+
+    EV/EBITDA, P/B and D/E are NOT directly in the HTML — screener renders
+    them via JS charts. We derive them from values that ARE in the static HTML:
+
+      P/B        = Current Price / Book Value          (both in #top-ratios)
+      D/E        = Borrowings / (Equity + Reserves)    (balance-sheet table)
+      EV/EBITDA  = (Mkt Cap + Borrowings - Cash) /
+                   Operating Profit                    (top-ratios + tables)
 
     Tries consolidated view first, falls back to standalone.
-    Returns a dict of floats ready to merge into the stock record.
-    Never raises — returns {} on any failure so the rest of the pipeline continues.
+    Never raises — returns {} on any failure.
     """
     import requests
     from bs4 import BeautifulSoup
 
-    # Rotate a couple of common UA strings to reduce 403s
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) "
@@ -325,7 +330,6 @@ def fetch_screener_data(symbol):
             if r.status_code == 200 and "top-ratios" in r.text:
                 response = r
                 break
-            # 404 → standalone might still work; anything else is a hard failure
         except requests.exceptions.Timeout:
             print(f"  Screener: timeout for {symbol}, skipping")
             return {}
@@ -339,100 +343,117 @@ def fetch_screener_data(symbol):
 
     soup = BeautifulSoup(response.text, "lxml" if _lxml_available else "html.parser")
 
-    # ── parse #top-ratios ────────────────────────────────────────────────────
-    # Each <li> looks like:
-    #   <li>
-    #     <span class="name">ROE <span class="sub">#</span></span>
-    #     <span class="number">%<span class="value">15.23</span></span>
-    #   </li>
-    # Some older layouts put the number directly in a <span class="value">.
+    # ── helpers ──────────────────────────────────────────────────────────────
 
-    raw: dict[str, str] = {}
+    def to_float(val) -> float | None:
+        if val in (None, "", "—", "-", "N/A"):
+            return None
+        try:
+            return float(str(val).replace(",", "").replace("%", "").strip())
+        except (TypeError, ValueError):
+            return None
 
+    def table_rows(section_id: str) -> dict[str, list[str]]:
+        """Return {row_label: [cell_texts...]} for a named section table."""
+        sec = soup.find("section", id=section_id)
+        if not sec:
+            return {}
+        result = {}
+        for row in sec.find_all("tr"):
+            cells = row.find_all(["th", "td"])
+            if not cells:
+                continue
+            label = cells[0].get_text(strip=True)
+            vals = [c.get_text(strip=True) for c in cells[1:]]
+            result[label] = vals
+        return result
+
+    def latest(rows: dict, *keys) -> float | None:
+        """Return the most recent non-empty value for the first matching key."""
+        for key in keys:
+            vals = rows.get(key, [])
+            # walk backwards to find the last non-empty cell
+            for v in reversed(vals):
+                cleaned = v.replace(",", "").replace("%", "").strip()
+                if cleaned and cleaned not in ("—", "-"):
+                    return to_float(cleaned)
+        return None
+
+    # ── #top-ratios ──────────────────────────────────────────────────────────
+    top_raw: dict[str, float | None] = {}
     top = soup.find("ul", id="top-ratios")
     if top:
         for li in top.find_all("li"):
             name_tag = li.find("span", class_="name")
-            if not name_tag:
+            # <span class="number"> holds the clean numeric text
+            num_tag = li.find("span", class_="number")
+            if not name_tag or not num_tag:
                 continue
-            # The name may have a nested <span class="sub"> — ignore it
             label = name_tag.get_text(" ", strip=True).split("#")[0].strip()
+            # "High / Low" has two number spans — take the first
+            top_raw[label] = to_float(num_tag.get_text(strip=True))
 
-            # Try <span class="value"> first, then the whole number span
-            value_tag = li.find("span", class_="value") or li.find("span", class_="number")
-            if not value_tag:
-                continue
+    pe          = top_raw.get("Stock P/E")
+    book_value  = top_raw.get("Book Value")        # ₹ per share
+    current_price = top_raw.get("Current Price")
+    market_cap  = top_raw.get("Market Cap")        # Cr
+    roe         = top_raw.get("ROE")
+    roce        = top_raw.get("ROCE")
+    div_yield   = top_raw.get("Dividend Yield")
 
-            val = (
-                value_tag.get_text(strip=True)
-                .replace(",", "")
-                .replace("%", "")
-                .replace("₹", "")
-                .replace("Cr.", "")
-                .replace("Cr", "")
-                .strip()
-            )
-            raw[label] = val
+    # ── P/B — computed from top-ratios ───────────────────────────────────────
+    price_to_book: float | None = None
+    if current_price and book_value and book_value != 0:
+        price_to_book = round(current_price / book_value, 2)
 
-    def to_float(val: str | None) -> float | None:
-        if val in (None, "", "—", "-", "N/A"):
-            return None
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return None
+    # ── balance sheet rows ───────────────────────────────────────────────────
+    bs_rows = table_rows("balance-sheet")
 
-    # ── key label mappings (screener uses different spellings occasionally) ──
-    def pick(*labels) -> float | None:
-        for label in labels:
-            v = to_float(raw.get(label))
-            if v is not None:
-                return v
-        return None
+    borrowings     = latest(bs_rows, "Borrowings+", "Borrowings")
+    equity_capital = latest(bs_rows, "Equity Capital")
+    reserves       = latest(bs_rows, "Reserves")
+    investments    = latest(bs_rows, "Investments")   # proxy for cash/liquid
 
-    # ── parse the 10-year P&L table for OPM if top-ratios misses it ─────────
-    # Screener puts current-year OPM in the P&L table under "OPM %"
-    opm_from_table: float | None = None
-    try:
-        pl_section = soup.find("section", id="profit-loss")
-        if pl_section:
-            rows = pl_section.find_all("tr")
-            for row in rows:
-                cells = row.find_all("td")
-                if not cells:
-                    continue
-                row_label = cells[0].get_text(strip=True)
-                if "OPM" in row_label or "Operating Profit Margin" in row_label:
-                    # Last non-empty cell is TTM / most recent
-                    values = [
-                        c.get_text(strip=True).replace("%", "").replace(",", "").strip()
-                        for c in cells[1:]
-                        if c.get_text(strip=True) not in ("", "—", "-")
-                    ]
-                    if values:
-                        opm_from_table = to_float(values[-1])
-                    break
-    except Exception:
-        pass
+    # ── D/E — computed from balance sheet ────────────────────────────────────
+    debt_to_equity: float | None = None
+    if borrowings is not None and equity_capital is not None and reserves is not None:
+        total_equity = equity_capital + reserves
+        if total_equity > 0:
+            debt_to_equity = round(borrowings / total_equity, 2)
+
+    # ── P&L rows ─────────────────────────────────────────────────────────────
+    pl_rows = table_rows("profit-loss")
+
+    operating_profit = latest(pl_rows, "Operating Profit")   # Cr
+    opm_val          = latest(pl_rows, "OPM %")
+
+    # ── EV/EBITDA — computed ─────────────────────────────────────────────────
+    # EV  = Market Cap (Cr) + Borrowings (Cr) - Cash proxy (Investments, Cr)
+    # EBITDA ≈ Operating Profit (screener's "Operating Profit" = EBIT + D&A at
+    #           this level of aggregation, which is close enough for EV/EBITDA)
+    ev_ebitda: float | None = None
+    if (market_cap is not None and borrowings is not None
+            and operating_profit is not None and operating_profit > 0):
+        cash_proxy = investments or 0
+        ev = market_cap + borrowings - cash_proxy
+        ev_ebitda = round(ev / operating_profit, 2)
+
+    # ── OPM from P&L (already parsed above) ─────────────────────────────────
+    opm: float | None = opm_val
 
     result = {
-        # valuation
-        "pe_ratio":           pick("Stock P/E", "P/E"),
-        "price_to_book":      pick("Price to Book", "Price to book value", "P/B"),
-        "ev_ebitda":          pick("EV/EBITDA", "EV / EBITDA"),
-        # profitability
-        "roe":                pick("ROE", "Return on Equity"),
-        "roce":               pick("ROCE", "Return on Capital Employed"),
-        "opm":                pick("OPM", "Operating Profit Margin") or opm_from_table,
-        # per-share / income
-        "dividend_yield":     pick("Dividend Yield"),
-        "book_value_per_share": pick("Book Value"),
-        # leverage
-        "debt_to_equity":     pick("Debt to Equity", "Debt / Equity"),
+        "pe_ratio":             pe,
+        "price_to_book":        price_to_book,
+        "ev_ebitda":            ev_ebitda,
+        "roe":                  roe,
+        "roce":                 roce,
+        "opm":                  opm,
+        "dividend_yield":       div_yield,
+        "book_value_per_share": book_value,
+        "debt_to_equity":       debt_to_equity,
     }
 
-    # Log what we got so failures are easy to diagnose
-    found = [k for k, v in result.items() if v is not None]
+    found   = [k for k, v in result.items() if v is not None]
     missing = [k for k, v in result.items() if v is None]
     print(f"  Screener {symbol}: got {found}" + (f" | missing {missing}" if missing else ""))
 
