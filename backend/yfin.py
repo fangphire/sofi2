@@ -97,16 +97,114 @@ def fetch_stock_data(symbol):
             "beta":                    None,
             "last_updated":            datetime.now().isoformat()
         }
-        # enrich with screener.in fundamentals
+        # Quarterly results + promoter holding from NSE (free, no rate limit issues)
+        data.update(fetch_nse_fundamentals(symbol))
+
+        # Valuation ratios not published by NSE — scraped from screener.in.
+        # fetch_screener_data never raises; it returns {} on any failure.
+        # We sleep briefly before the request to stay well below screener's
+        # informal throttle (they don't publish a limit, but 1–2 req/sec is safe).
         time.sleep(1)
-        screener = fetch_screener_data(symbol)
-        data.update({k: v for k, v in screener.items() if v is not None})
+        screener_data = fetch_screener_data(symbol)
+        # Only overwrite fields that screener found — don't clobber NSE values
+        for key, value in screener_data.items():
+            if value is not None:
+                data[key] = value
 
         return data
 
     except Exception as e:
         print(f"  Error fetching {symbol}: {e}")
         return None
+
+
+def fetch_nse_fundamentals(symbol):
+    """Fetch free quarterly growth and promoter-holding data from NSE."""
+    try:
+        with NSE(download_folder=COOKIE_DIR, server=True) as nse:
+            comparison = nse.results_comparison(symbol)
+            # NSE documents a three-request-per-second throttle.
+            time.sleep(0.5)
+            shareholding_rows = nse.shareholding(symbol)
+    except Exception as e:
+        print(f"  NSE fundamentals unavailable for {symbol}: {e}")
+        return {}
+
+    def number(value):
+        if value in (None, "", "-", "—"):
+            return None
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+
+    def nse_date(value):
+        if not value:
+            return None
+        value = str(value).split()[0]
+        for date_format in ("%d-%b-%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(value, date_format).date()
+            except ValueError:
+                continue
+        return None
+
+    result_rows = comparison.get("resCmpData", []) if isinstance(comparison, dict) else []
+    quarters = []
+    for row in result_rows:
+        report_date = nse_date(row.get("re_to_dt"))
+        if report_date:
+            quarters.append({
+                "date": report_date,
+                "revenue": number(row.get("re_total_inc")),
+                "profit": number(row.get("re_net_profit")),
+            })
+
+    quarters.sort(key=lambda row: row["date"], reverse=True)
+
+    def yoy_growth(metric):
+        if not quarters:
+            return None
+        latest = quarters[0]
+        current = latest[metric]
+        if current is None:
+            return None
+        try:
+            prior_year_date = latest["date"].replace(year=latest["date"].year - 1)
+        except ValueError:  # 29 February
+            prior_year_date = latest["date"].replace(year=latest["date"].year - 1, day=28)
+        candidates = [row for row in quarters if row[metric] is not None]
+        if not candidates:
+            return None
+        prior = min(candidates, key=lambda row: abs((row["date"] - prior_year_date).days))
+        if abs((prior["date"] - prior_year_date).days) > 45 or prior[metric] == 0:
+            return None
+        return round(((current / prior[metric]) - 1) * 100, 2)
+
+    holdings = []
+    for row in shareholding_rows if isinstance(shareholding_rows, list) else []:
+        report_date = nse_date(row.get("date"))
+        holding = number(row.get("pr_and_prgrp"))
+        if report_date and holding is not None:
+            holdings.append((report_date, holding))
+    holdings.sort(reverse=True)
+
+    promoter_holding = holdings[0][1] if holdings else None
+    promoter_change = (
+        round(holdings[0][1] - holdings[1][1], 2)
+        if len(holdings) > 1 else None
+    )
+    revenue_yoy = yoy_growth("revenue")
+    profit_yoy = yoy_growth("profit")
+
+    return {
+        "sales_growth": revenue_yoy,
+        "revenue_growth_yoy": revenue_yoy,
+        "profit_growth": profit_yoy,
+        "earnings_growth_yoy": profit_yoy,
+        "promoter_holding": promoter_holding,
+        "promoter_holding_change": promoter_change,
+    }
 
 def fetch_price_history(symbol, days=365):
     """
@@ -156,18 +254,18 @@ def fetch_price_history(symbol, days=365):
         skipped_rows = 0
         for row in history_rows:
             try:
-                  trade_date = parse_trade_date(read_value(
-                      row, "mtimestamp", "mTIMESTAMP", "CH_TIMESTAMP", "TIMESTAMP", "date"
-                  ))
-                  records.append({
-                      "ticker":      f"{symbol}.NS",
-                      "date":        trade_date.isoformat(),
-                      "open_price":  round(float(read_value(row, "chOpeningPrice", "CH_OPENING_PRICE", "open")), 2),
-                      "high_price":  round(float(read_value(row, "chTradeHighPrice", "CH_TRADE_HIGH_PRICE", "high")), 2),
-                      "low_price":   round(float(read_value(row, "chTradeLowPrice", "CH_TRADE_LOW_PRICE", "low")), 2),
-                      "close_price": round(float(read_value(row, "chClosingPrice", "CH_CLOSING_PRICE", "close")), 2),
-                      "volume":      int(float(read_value(row, "chTotTradedQty", "CH_TOT_TRADED_QTY", "volume")))
-                  })    
+                trade_date = parse_trade_date(read_value(
+                    row, "mtimestamp", "mTIMESTAMP", "CH_TIMESTAMP", "TIMESTAMP", "date"
+                ))
+                records.append({
+                    "ticker":      f"{symbol}.NS",
+                    "date":        trade_date.isoformat(),
+                    "open_price":  round(float(read_value(row, "chOpeningPrice", "CH_OPENING_PRICE", "open")), 2),
+                    "high_price":  round(float(read_value(row, "chTradeHighPrice", "CH_TRADE_HIGH_PRICE", "high")), 2),
+                    "low_price":   round(float(read_value(row, "chTradeLowPrice", "CH_TRADE_LOW_PRICE", "low")), 2),
+                    "close_price": round(float(read_value(row, "chClosingPrice", "CH_CLOSING_PRICE", "close")), 2),
+                    "volume":      int(float(read_value(row, "chTotTradedQty", "CH_TOT_TRADED_QTY", "volume")))
+                })
             except (KeyError, TypeError, ValueError) as row_error:
                 skipped_rows += 1
                 if skipped_rows == 1:
@@ -189,75 +287,148 @@ def fetch_price_history(symbol, days=365):
 def fetch_screener_data(symbol):
     """
     Scrapes key fundamentals from screener.in public company page.
-    NSE doesn't provide ROE, ROCE, OPM, NPM, D/E — screener does.
+    NSE doesn't provide ROE, ROCE, OPM, D/E, EV/EBITDA — screener does.
+
+    Tries consolidated view first, falls back to standalone.
+    Returns a dict of floats ready to merge into the stock record.
+    Never raises — returns {} on any failure so the rest of the pipeline continues.
     """
     import requests
     from bs4 import BeautifulSoup
 
+    # Rotate a couple of common UA strings to reduce 403s
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36"
-        )
+            "Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
-    # Try consolidated page first, then standalone
+    response = None
     for url in [
         f"https://www.screener.in/company/{symbol}/consolidated/",
         f"https://www.screener.in/company/{symbol}/",
     ]:
         try:
-            r = requests.get(url, headers=headers, timeout=10)
-
+            r = requests.get(url, headers=headers, timeout=12)
             if r.status_code == 200 and "top-ratios" in r.text:
+                response = r
                 break
+            # 404 → standalone might still work; anything else is a hard failure
+        except requests.exceptions.Timeout:
+            print(f"  Screener: timeout for {symbol}, skipping")
+            return {}
+        except Exception as exc:
+            print(f"  Screener: request error for {symbol}: {exc}")
+            return {}
 
-        except Exception:
-            continue
-    else:
-        print(f"  Screener: no page found for {symbol}")
+    if response is None:
+        print(f"  Screener: no usable page for {symbol}")
         return {}
 
-    soup = BeautifulSoup(r.text, "html.parser")
-    ratios = {}
+    soup = BeautifulSoup(response.text, "lxml")
+
+    # ── parse #top-ratios ────────────────────────────────────────────────────
+    # Each <li> looks like:
+    #   <li>
+    #     <span class="name">ROE <span class="sub">#</span></span>
+    #     <span class="number">%<span class="value">15.23</span></span>
+    #   </li>
+    # Some older layouts put the number directly in a <span class="value">.
+
+    raw: dict[str, str] = {}
 
     top = soup.find("ul", id="top-ratios")
     if top:
         for li in top.find_all("li"):
             name_tag = li.find("span", class_="name")
-            value_tag = li.find("span", class_="value")
+            if not name_tag:
+                continue
+            # The name may have a nested <span class="sub"> — ignore it
+            label = name_tag.get_text(" ", strip=True).split("#")[0].strip()
 
-            if name_tag and value_tag:
-                key = name_tag.get_text(strip=True)
-                val = (
-                    value_tag.get_text(strip=True)
-                    .replace(",", "")
-                    .replace("%", "")
-                    .replace("₹", "")
-                    .strip()
-                )
-                ratios[key] = val
+            # Try <span class="value"> first, then the whole number span
+            value_tag = li.find("span", class_="value") or li.find("span", class_="number")
+            if not value_tag:
+                continue
 
-    def to_float(val):
+            val = (
+                value_tag.get_text(strip=True)
+                .replace(",", "")
+                .replace("%", "")
+                .replace("₹", "")
+                .replace("Cr.", "")
+                .replace("Cr", "")
+                .strip()
+            )
+            raw[label] = val
+
+    def to_float(val: str | None) -> float | None:
+        if val in (None, "", "—", "-", "N/A"):
+            return None
         try:
-            if val in (None, "", "—", "-"):
-                return None
             return float(val)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
-    return {
-        "roe": to_float(ratios.get("ROE")),
-        "roce": to_float(ratios.get("ROCE")),
-        "pe_ratio": to_float(ratios.get("Stock P/E")),
-        "dividend_yield": to_float(ratios.get("Dividend Yield")),
-        "book_value_per_share": to_float(ratios.get("Book Value")),
-        "opm": None,
-        "debt_to_equity": None,
-        "ev_ebitda": None,
-        "sales_growth": None,
-        "profit_growth": None,
+    # ── key label mappings (screener uses different spellings occasionally) ──
+    def pick(*labels) -> float | None:
+        for label in labels:
+            v = to_float(raw.get(label))
+            if v is not None:
+                return v
+        return None
+
+    # ── parse the 10-year P&L table for OPM if top-ratios misses it ─────────
+    # Screener puts current-year OPM in the P&L table under "OPM %"
+    opm_from_table: float | None = None
+    try:
+        pl_section = soup.find("section", id="profit-loss")
+        if pl_section:
+            rows = pl_section.find_all("tr")
+            for row in rows:
+                cells = row.find_all("td")
+                if not cells:
+                    continue
+                row_label = cells[0].get_text(strip=True)
+                if "OPM" in row_label or "Operating Profit Margin" in row_label:
+                    # Last non-empty cell is TTM / most recent
+                    values = [
+                        c.get_text(strip=True).replace("%", "").replace(",", "").strip()
+                        for c in cells[1:]
+                        if c.get_text(strip=True) not in ("", "—", "-")
+                    ]
+                    if values:
+                        opm_from_table = to_float(values[-1])
+                    break
+    except Exception:
+        pass
+
+    result = {
+        # valuation
+        "pe_ratio":           pick("Stock P/E", "P/E"),
+        "price_to_book":      pick("Price to Book", "Price to book value", "P/B"),
+        "ev_ebitda":          pick("EV/EBITDA", "EV / EBITDA"),
+        # profitability
+        "roe":                pick("ROE", "Return on Equity"),
+        "roce":               pick("ROCE", "Return on Capital Employed"),
+        "opm":                pick("OPM", "Operating Profit Margin") or opm_from_table,
+        # per-share / income
+        "dividend_yield":     pick("Dividend Yield"),
+        "book_value_per_share": pick("Book Value"),
+        # leverage
+        "debt_to_equity":     pick("Debt to Equity", "Debt / Equity"),
     }
+
+    # Log what we got so failures are easy to diagnose
+    found = [k for k, v in result.items() if v is not None]
+    missing = [k for k, v in result.items() if v is None]
+    print(f"  Screener {symbol}: got {found}" + (f" | missing {missing}" if missing else ""))
+
+    return result
 
 
 def upsert_stock(data):
