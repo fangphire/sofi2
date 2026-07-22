@@ -131,24 +131,54 @@ def fetch_price_history(symbol, days=365):
             print(f"  No history returned for {symbol}")
             return []
 
+        def read_value(row, *keys):
+            """Return the first populated field from NSE's versioned responses."""
+            for key in keys:
+                value = row.get(key)
+                if value not in (None, ""):
+                    return value
+            raise KeyError(" / ".join(keys))
+
+        def parse_trade_date(value):
+            value = str(value)
+            # Current NSE responses use mTIMESTAMP (e.g. 01-Apr-2025); some
+            # versions expose CH_TIMESTAMP (e.g. 2025-04-01) instead.
+            # ISO dates may be followed by a time; NSE's display date is 11 chars.
+            date_portion = value[:10] if len(value) > 4 and value[4] == "-" else value[:11]
+            for date_format in ("%Y-%m-%d", "%d-%b-%Y", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(date_portion, date_format).date()
+                except ValueError:
+                    continue
+            raise ValueError(f"Unrecognised NSE trade date: {value}")
+
         records = []
+        skipped_rows = 0
         for row in history_rows:
             try:
-                # CH_TIMESTAMP is an ISO date in NSE's historical response.
-                trade_date = date.fromisoformat(str(row["CH_TIMESTAMP"]))
+                trade_date = parse_trade_date(read_value(
+                    row, "CH_TIMESTAMP", "mTIMESTAMP", "TIMESTAMP", "date"
+                ))
                 records.append({
                     "ticker":      f"{symbol}.NS",
                     "date":        trade_date.isoformat(),
-                    "open_price":  round(float(row["CH_OPENING_PRICE"]), 2),
-                    "high_price":  round(float(row["CH_TRADE_HIGH_PRICE"]), 2),
-                    "low_price":   round(float(row["CH_TRADE_LOW_PRICE"]), 2),
-                    "close_price": round(float(row["CH_CLOSING_PRICE"]), 2),
-                    "volume":      int(row["CH_TOT_TRADED_QTY"])
+                    "open_price":  round(float(read_value(row, "CH_OPENING_PRICE", "open")), 2),
+                    "high_price":  round(float(read_value(row, "CH_TRADE_HIGH_PRICE", "high")), 2),
+                    "low_price":   round(float(read_value(row, "CH_TRADE_LOW_PRICE", "low")), 2),
+                    "close_price": round(float(read_value(row, "CH_CLOSING_PRICE", "close")), 2),
+                    "volume":      int(float(read_value(row, "CH_TOT_TRADED_QTY", "volume")))
                 })
             except (KeyError, TypeError, ValueError) as row_error:
-                print(f"  Skipping malformed history row for {symbol}: {row_error}")
+                skipped_rows += 1
+                if skipped_rows == 1:
+                    print(
+                        f"  Skipping malformed history rows for {symbol}: {row_error}. "
+                        f"Available fields: {', '.join(row.keys())}"
+                    )
                 continue
 
+        if skipped_rows:
+            print(f"  Skipped {skipped_rows} malformed history rows for {symbol}")
         print(f"  Got {len(records)} days of history for {symbol}")
         return records
 
