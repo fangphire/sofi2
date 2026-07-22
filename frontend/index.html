@@ -436,9 +436,6 @@
     <div class="card"><div class="card-label">Companies Tracked</div><div class="card-value" id="s-count">—</div></div>
     <div class="card"><div class="card-label">Total Market Cap</div><div class="card-value" id="s-mcap">—</div><div class="card-sub">₹ Crores</div></div>
     <div class="card"><div class="card-label">Avg P/E Ratio</div><div class="card-value" id="s-pe">—</div></div>
-    <div class="card"><div class="card-label">Avg ROE</div><div class="card-value" id="s-roe">—</div><div class="card-sub">%</div></div>
-    <div class="card"><div class="card-label">Avg ROCE</div><div class="card-value" id="s-roce">—</div><div class="card-sub">%</div></div>
-    <div class="card"><div class="card-label">Top Grower</div><div class="card-value" id="s-grower" style="font-size:15px;">—</div><div class="card-sub" id="s-grower-val"></div></div>
   </div>
 
   <!-- filters -->
@@ -450,24 +447,14 @@
     <select id="filter-sort" onchange="applyFilters()">
       <option value="market_cap">Sort: Market Cap</option>
       <option value="pe_ratio">Sort: P/E Ratio</option>
-      <option value="roe">Sort: ROE</option>
-      <option value="roce">Sort: ROCE</option>
-      <option value="sales_growth_3yr">Sort: Sales Growth 3Y</option>
-      <option value="profit_growth_3yr">Sort: Profit Growth 3Y</option>
-      <option value="debt_to_equity">Sort: Debt/Equity</option>
+      <option value="current_price">Sort: Current Price</option>
     </select>
     <select id="filter-order" onchange="applyFilters()">
       <option value="desc">High → Low</option>
       <option value="asc">Low → High</option>
     </select>
-    <input type="number" id="filter-min-roe" placeholder="Min ROE %" style="width:120px" onchange="applyFilters()"/>
     <select id="filter-heatmap" onchange="updateHeatmap()">
-      <option value="roe">Heatmap: ROE</option>
-      <option value="roce">Heatmap: ROCE</option>
-      <option value="sales_growth_3yr">Heatmap: Sales Growth 3Y</option>
-      <option value="profit_growth_3yr">Heatmap: Profit Growth 3Y</option>
       <option value="pe_ratio">Heatmap: P/E Ratio</option>
-      <option value="opm">Heatmap: OPM</option>
     </select>
     <button class="clear-btn" onclick="clearFilters()">Clear</button>
   </div>
@@ -490,8 +477,8 @@
   <div class="heatmap-card">
     <div class="chart-header">
       <div>
-        <div class="chart-title">Financial Ratio Heatmap</div>
-        <div class="chart-subtitle">Colour intensity reflects metric strength</div>
+        <div class="chart-title">P/E Ratio Heatmap</div>
+        <div class="chart-subtitle">Colour intensity reflects relative valuation</div>
       </div>
     </div>
     <div class="heatmap-grid" id="heatmap-grid"></div>
@@ -577,14 +564,6 @@
     document.getElementById("s-mcap").textContent  = data.total_market_cap_cr
       ? "₹" + formatCr(data.total_market_cap_cr) : "—"
     document.getElementById("s-pe").textContent   = data.avg_pe_ratio?.toFixed(1) ?? "—"
-    document.getElementById("s-roe").textContent  = data.avg_roe?.toFixed(1) ?? "—"
-    document.getElementById("s-roce").textContent = data.avg_roce?.toFixed(1) ?? "—"
-
-    if (data.top_grower) {
-      document.getElementById("s-grower").textContent = data.top_grower.company_name?.split(" ")[0] ?? "—"
-      document.getElementById("s-grower-val").textContent =
-        (data.top_grower.sales_growth_3yr?.toFixed(1) ?? "—") + "% sales CAGR 3Y"
-    }
   }
 
   // ── sector filter ─────────────────────────────────────────────────────────
@@ -620,13 +599,6 @@
             <th><div class="th-tooltip">Mkt Cap Cr<span class="tip">Market capitalisation in ₹ Crores</span></div></th>
             <th><div class="th-tooltip">P/E<span class="tip">Price to Earnings ratio</span></div></th>
             <th><div class="th-tooltip">EPS<span class="tip">Earnings per share (₹)</span></div></th>
-            <th><div class="th-tooltip">ROE %<span class="tip">Return on Equity</span></div></th>
-            <th><div class="th-tooltip">ROCE %<span class="tip">Return on Capital Employed</span></div></th>
-            <th><div class="th-tooltip">OPM %<span class="tip">Operating Profit Margin</span></div></th>
-            <th><div class="th-tooltip">D/E<span class="tip">Debt to Equity ratio</span></div></th>
-            <th><div class="th-tooltip">Sales 3Y%<span class="tip">3-year sales CAGR</span></div></th>
-            <th><div class="th-tooltip">PAT 3Y%<span class="tip">3-year profit CAGR</span></div></th>
-            <th><div class="th-tooltip">EV/EBITDA<span class="tip">Enterprise Value to EBITDA</span></div></th>
           </tr>
         </thead>
         <tbody>
@@ -656,13 +628,6 @@
         <td>${s.market_cap ? "₹" + formatCr(s.market_cap / 1e7) : "—"}</td>
         <td>${fmt(s.pe_ratio)}</td>
         <td>${fmt(s.eps)}</td>
-        <td class="${colorClass(s.roe, 12, 20)}">${fmt(s.roe)}</td>
-        <td class="${colorClass(s.roce, 12, 20)}">${fmt(s.roce)}</td>
-        <td class="${colorClass(s.opm, 10, 20)}">${fmt(s.opm)}</td>
-        <td class="${debtColor(s.debt_to_equity)}">${fmt(s.debt_to_equity)}</td>
-        <td class="${colorClass(s.sales_growth_3yr, 8, 15)}">${fmtPct(s.sales_growth_3yr)}</td>
-        <td class="${colorClass(s.profit_growth_3yr, 8, 15)}">${fmtPct(s.profit_growth_3yr)}</td>
-        <td>${fmt(s.ev_ebitda)}</td>
       </tr>`
   }
 
@@ -672,11 +637,9 @@
     const sector  = document.getElementById("filter-sector").value
     const sortBy  = document.getElementById("filter-sort").value
     const order   = document.getElementById("filter-order").value
-    const minRoe  = document.getElementById("filter-min-roe").value
 
     let url = `${API}/stocks?sort_by=${sortBy}&order=${order}`
     if (sector) url += `&sector=${encodeURIComponent(sector)}`
-    if (minRoe) url += `&min_roe=${minRoe}`
 
     try {
       const res  = await fetch(url)
@@ -693,7 +656,6 @@
     document.getElementById("filter-sector").value  = ""
     document.getElementById("filter-sort").value    = "market_cap"
     document.getElementById("filter-order").value   = "desc"
-    document.getElementById("filter-min-roe").value = ""
     loadAll()
   }
 
@@ -798,7 +760,7 @@
       const val = s[metric]
       const normalized = val != null ? (val - min) / (max - min || 1) : 0
       const bg  = heatColor(normalized, metric)
-      const display = val != null ? val.toFixed(1) + (metric.includes("growth") || metric === "roe" || metric === "roce" || metric === "opm" ? "%" : "x") : "—"
+      const display = val != null ? val.toFixed(1) + "x" : "—"
 
       return `
         <div class="heatmap-cell" style="background:${bg}"
@@ -811,7 +773,7 @@
 
   function heatColor(t, metric) {
     // for debt — red is high, green is low (inverted)
-    const invert = metric === "debt_to_equity" || metric === "pe_ratio"
+    const invert = metric === "pe_ratio"
     const v = invert ? 1 - t : t
     const r = Math.round(239 + (38  - 239) * v)
     const g = Math.round(83  + (166 - 83)  * v)
@@ -863,15 +825,7 @@
         ["Current Price", "current_price", "₹"],
         ["Market Cap Cr", "market_cap", "cr"],
         ["P/E Ratio", "pe_ratio", "x"],
-        ["ROE %", "roe", "%"],
-        ["ROCE %", "roce", "%"],
-        ["OPM %", "opm", "%"],
-        ["Sales Growth 3Y", "sales_growth_3yr", "%"],
-        ["Profit Growth 3Y", "profit_growth_3yr", "%"],
-        ["Debt / Equity", "debt_to_equity", "x"],
-        ["EV/EBITDA", "ev_ebitda", "x"],
         ["EPS", "eps", "₹"],
-        ["Beta", "beta", ""],
       ]
 
       const tickers = selectedForCompare
