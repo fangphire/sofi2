@@ -110,7 +110,10 @@ def get_all_stocks(
     query = """
         SELECT ticker, company_name, sector, industry,
                current_price, day_high, day_low,
-               market_cap, pe_ratio, eps, last_updated
+               market_cap, pe_ratio, eps,
+               ev_ebitda, price_to_book, roe, debt_to_equity,
+               opm, roce, dividend_yield, book_value_per_share,
+               last_updated
         FROM stocks
         WHERE 1=1
     """
