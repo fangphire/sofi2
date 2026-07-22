@@ -455,6 +455,10 @@
     </select>
     <select id="filter-heatmap" onchange="updateHeatmap()">
       <option value="pe_ratio">Heatmap: P/E Ratio</option>
+      <option value="ev_ebitda">Heatmap: EV/EBITDA</option>
+      <option value="price_to_book">Heatmap: Price/Book</option>
+      <option value="roe">Heatmap: ROE %</option>
+      <option value="debt_to_equity">Heatmap: Debt/Equity</option>
     </select>
     <button class="clear-btn" onclick="clearFilters()">Clear</button>
   </div>
@@ -598,6 +602,10 @@
             <th><div class="th-tooltip">Price<span class="tip">Current market price (₹)</span></div></th>
             <th><div class="th-tooltip">Mkt Cap Cr<span class="tip">Market capitalisation in ₹ Crores</span></div></th>
             <th><div class="th-tooltip">P/E<span class="tip">Price to Earnings ratio</span></div></th>
+            <th><div class="th-tooltip">EV/EBITDA<span class="tip">Enterprise Value / EBITDA — lower = cheaper (source: screener.in)</span></div></th>
+            <th><div class="th-tooltip">P/B<span class="tip">Price to Book ratio (source: screener.in)</span></div></th>
+            <th><div class="th-tooltip">ROE %<span class="tip">Return on Equity (source: screener.in)</span></div></th>
+            <th><div class="th-tooltip">D/E<span class="tip">Debt to Equity ratio (source: screener.in)</span></div></th>
             <th><div class="th-tooltip">EPS<span class="tip">Earnings per share (₹)</span></div></th>
           </tr>
         </thead>
@@ -627,6 +635,10 @@
         <td>₹${fmt(s.current_price)}</td>
         <td>${s.market_cap ? "₹" + formatCr(s.market_cap / 1e7) : "—"}</td>
         <td>${fmt(s.pe_ratio)}</td>
+        <td class="${colorClass(s.ev_ebitda, 5, 20)}">${s.ev_ebitda != null ? s.ev_ebitda.toFixed(1) + "x" : '<span class="neutral">—</span>'}</td>
+        <td>${s.price_to_book != null ? s.price_to_book.toFixed(1) + "x" : '<span class="neutral">—</span>'}</td>
+        <td class="${colorClass(s.roe, 10, 20)}">${s.roe != null ? s.roe.toFixed(1) + "%" : '<span class="neutral">—</span>'}</td>
+        <td class="${debtColor(s.debt_to_equity)}">${s.debt_to_equity != null ? s.debt_to_equity.toFixed(2) : '<span class="neutral">—</span>'}</td>
         <td>${fmt(s.eps)}</td>
       </tr>`
   }
@@ -752,6 +764,19 @@
     const metric = document.getElementById("filter-heatmap").value
     const grid   = document.getElementById("heatmap-grid")
 
+    const metaMap = {
+      pe_ratio:      { label: "P/E Ratio",     unit: "x",  invert: true  },
+      ev_ebitda:     { label: "EV/EBITDA",      unit: "x",  invert: true  },
+      price_to_book: { label: "Price/Book",     unit: "x",  invert: true  },
+      roe:           { label: "ROE %",          unit: "%",  invert: false },
+      debt_to_equity:{ label: "Debt/Equity",    unit: "",   invert: true  },
+    }
+    const meta = metaMap[metric] || { label: metric, unit: "", invert: false }
+
+    // Update heatmap card title
+    const titleEl = document.querySelector(".heatmap-card .chart-title")
+    if (titleEl) titleEl.textContent = meta.label + " Heatmap"
+
     const values  = allStocks.map(s => s[metric]).filter(v => v != null)
     const min     = Math.min(...values)
     const max     = Math.max(...values)
@@ -759,8 +784,10 @@
     grid.innerHTML = allStocks.map(s => {
       const val = s[metric]
       const normalized = val != null ? (val - min) / (max - min || 1) : 0
-      const bg  = heatColor(normalized, metric)
-      const display = val != null ? val.toFixed(1) + "x" : "—"
+      const bg  = heatColor(normalized, meta.invert)
+      const display = val != null
+        ? (meta.unit === "%" ? val.toFixed(1) + "%" : val.toFixed(1) + (meta.unit ? meta.unit : ""))
+        : "—"
 
       return `
         <div class="heatmap-cell" style="background:${bg}"
@@ -771,9 +798,9 @@
     }).join("")
   }
 
-  function heatColor(t, metric) {
-    // for debt — red is high, green is low (inverted)
-    const invert = metric === "pe_ratio"
+  function heatColor(t, invert) {
+    // invert=true → high value is red (bad), low is green (cheap)
+    // invert=false → high value is green (good, e.g. ROE)
     const v = invert ? 1 - t : t
     const r = Math.round(239 + (38  - 239) * v)
     const g = Math.round(83  + (166 - 83)  * v)
@@ -824,8 +851,12 @@
       const metrics = [
         ["Current Price", "current_price", "₹"],
         ["Market Cap Cr", "market_cap", "cr"],
-        ["P/E Ratio", "pe_ratio", "x"],
-        ["EPS", "eps", "₹"],
+        ["P/E Ratio",     "pe_ratio",    "x"],
+        ["EV/EBITDA",     "ev_ebitda",   "x"],
+        ["Price/Book",    "price_to_book","x"],
+        ["ROE %",         "roe",         "%"],
+        ["D/E Ratio",     "debt_to_equity",""],
+        ["EPS",           "eps",         "₹"],
       ]
 
       const tickers = selectedForCompare
@@ -844,9 +875,11 @@
           const raw = data.comparison[t]?.[key]
           let display = "—"
           if (raw != null) {
-            if (unit === "cr") display = "₹" + formatCr(raw / 1e7)
+            if (unit === "cr")  display = "₹" + formatCr(raw / 1e7)
             else if (unit === "₹") display = "₹" + raw.toLocaleString("en-IN", {maximumFractionDigits: 1})
-            else display = raw.toFixed(1) + unit
+            else if (unit === "%") display = raw.toFixed(1) + "%"
+            else if (unit === "x") display = raw.toFixed(1) + "x"
+            else display = raw.toFixed(2)
           }
           html += `<span class="compare-val">${display}</span>`
         })
