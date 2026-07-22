@@ -156,18 +156,18 @@ def fetch_price_history(symbol, days=365):
         skipped_rows = 0
         for row in history_rows:
             try:
-                trade_date = parse_trade_date(read_value(
-                    row, "CH_TIMESTAMP", "mTIMESTAMP", "TIMESTAMP", "date"
-                ))
-                records.append({
-                    "ticker":      f"{symbol}.NS",
-                    "date":        trade_date.isoformat(),
-                    "open_price":  round(float(read_value(row, "CH_OPENING_PRICE", "open")), 2),
-                    "high_price":  round(float(read_value(row, "CH_TRADE_HIGH_PRICE", "high")), 2),
-                    "low_price":   round(float(read_value(row, "CH_TRADE_LOW_PRICE", "low")), 2),
-                    "close_price": round(float(read_value(row, "CH_CLOSING_PRICE", "close")), 2),
-                    "volume":      int(float(read_value(row, "CH_TOT_TRADED_QTY", "volume")))
-                })
+                  trade_date = parse_trade_date(read_value(
+                      row, "mtimestamp", "mTIMESTAMP", "CH_TIMESTAMP", "TIMESTAMP", "date"
+                  ))
+                  records.append({
+                      "ticker":      f"{symbol}.NS",
+                      "date":        trade_date.isoformat(),
+                      "open_price":  round(float(read_value(row, "chOpeningPrice", "CH_OPENING_PRICE", "open")), 2),
+                      "high_price":  round(float(read_value(row, "chTradeHighPrice", "CH_TRADE_HIGH_PRICE", "high")), 2),
+                      "low_price":   round(float(read_value(row, "chTradeLowPrice", "CH_TRADE_LOW_PRICE", "low")), 2),
+                      "close_price": round(float(read_value(row, "chClosingPrice", "CH_CLOSING_PRICE", "close")), 2),
+                      "volume":      int(float(read_value(row, "chTotTradedQty", "CH_TOT_TRADED_QTY", "volume")))
+                  })    
             except (KeyError, TypeError, ValueError) as row_error:
                 skipped_rows += 1
                 if skipped_rows == 1:
