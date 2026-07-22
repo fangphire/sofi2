@@ -110,10 +110,7 @@ def get_all_stocks(
     query = """
         SELECT ticker, company_name, sector, industry,
                current_price, day_high, day_low,
-               market_cap, pe_ratio, eps, roe, roce,
-               sales_growth_3yr, profit_growth_3yr,
-               debt_to_equity, ev_ebitda, opm, npm,
-               analyst_recommendation, last_updated
+               market_cap, pe_ratio, eps, last_updated
         FROM stocks
         WHERE 1=1
     """
@@ -128,13 +125,8 @@ def get_all_stocks(
     if max_pe is not None:
         query += " AND pe_ratio <= ?"
         params.append(max_pe)
-    if min_roe is not None:
-        query += " AND roe >= ?"
-        params.append(min_roe)
-
     allowed_sort_columns = [
-        "market_cap", "pe_ratio", "roe", "roce", "current_price",
-        "sales_growth_3yr", "profit_growth_3yr", "debt_to_equity", "ev_ebitda"
+        "market_cap", "pe_ratio", "current_price"
     ]
     if sort_by in allowed_sort_columns:
         direction = "DESC" if order == "desc" else "ASC"
@@ -175,7 +167,7 @@ def get_stock(ticker: str):
 def get_market_summary():
     """
     Computed overview of all tracked stocks.
-    Calculates averages, totals, and identifies top gainer/loser.
+    Calculates the summary metrics supported by the available data.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -185,39 +177,16 @@ def get_market_summary():
             COUNT(*) as total_companies,
             COUNT(DISTINCT sector) as sectors_covered,
             ROUND(AVG(pe_ratio), 2) as avg_pe_ratio,
-            ROUND(AVG(roe), 2) as avg_roe,
-            ROUND(AVG(roce), 2) as avg_roce,
             ROUND(SUM(market_cap) / 1e7, 2) as total_market_cap_cr
         FROM stocks
         WHERE current_price IS NOT NULL
     """)
     summary = dict(cursor.fetchone())
 
-    # top gainer — highest sales growth 3yr
-    cursor.execute("""
-        SELECT ticker, company_name, sales_growth_3yr
-        FROM stocks
-        WHERE sales_growth_3yr IS NOT NULL
-        ORDER BY sales_growth_3yr DESC
-        LIMIT 1
-    """)
-    gainer = cursor.fetchone()
-
-    # highest debt to equity (most leveraged — useful signal)
-    cursor.execute("""
-        SELECT ticker, company_name, debt_to_equity
-        FROM stocks
-        WHERE debt_to_equity IS NOT NULL
-        ORDER BY debt_to_equity DESC
-        LIMIT 1
-    """)
-    most_leveraged = cursor.fetchone()
-
     # sector breakdown
     cursor.execute("""
         SELECT sector, COUNT(*) as count,
-               ROUND(AVG(pe_ratio), 2) as avg_pe,
-               ROUND(AVG(roe), 2) as avg_roe
+               ROUND(AVG(pe_ratio), 2) as avg_pe
         FROM stocks
         WHERE sector IS NOT NULL
         GROUP BY sector
@@ -229,8 +198,6 @@ def get_market_summary():
 
     return {
         **summary,
-        "top_grower": dict(gainer) if gainer else None,
-        "most_leveraged": dict(most_leveraged) if most_leveraged else None,
         "sector_breakdown": sectors,
         "last_updated": datetime.now().isoformat()
     }
@@ -299,9 +266,6 @@ def get_sectors():
             sector,
             COUNT(*) as stock_count,
             ROUND(AVG(pe_ratio), 2) as avg_pe,
-            ROUND(AVG(roe), 2) as avg_roe,
-            ROUND(AVG(roce), 2) as avg_roce,
-            ROUND(AVG(sales_growth_3yr), 2) as avg_sales_growth_3yr,
             ROUND(SUM(market_cap) / 1e7, 2) as total_market_cap_cr
         FROM stocks
         WHERE sector IS NOT NULL
@@ -350,14 +314,12 @@ def compare_stocks(tickers: str, metrics: Optional[str] = None):
     """
     Compare multiple stocks side by side.
     tickers = comma separated e.g. ?tickers=RELIANCE.NS,TCS.NS,INFY.NS
-    metrics = comma separated e.g. ?metrics=pe_ratio,roe,roce
+    metrics = comma separated e.g. ?metrics=pe_ratio,eps
     """
     ticker_list = [t.strip().upper() for t in tickers.split(",")]
 
     default_metrics = [
-        "company_name", "sector", "current_price", "market_cap",
-        "pe_ratio", "roe", "roce", "sales_growth_3yr",
-        "profit_growth_3yr", "debt_to_equity", "ev_ebitda", "opm"
+        "company_name", "sector", "current_price", "market_cap", "pe_ratio", "eps"
     ]
     metric_list = [m.strip() for m in metrics.split(",")] if metrics else default_metrics
 
