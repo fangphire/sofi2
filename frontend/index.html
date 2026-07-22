@@ -529,7 +529,9 @@
 </div>
 
 <script>
-  const API = "https://sofi-p2gq.onrender.com"
+  // The dashboard is served by this FastAPI app, so use the same deployment
+  // instead of a stale hard-coded Render URL.
+  const API = window.location.origin
 
   let allStocks = []
   let priceChart = null
